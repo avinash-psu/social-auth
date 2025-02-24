@@ -1,220 +1,189 @@
-// ***************************************************************************
-// Bank API code from Web Dev For Beginners project
-// https://github.com/microsoft/Web-Dev-For-Beginners/tree/main/7-bank-project/api
-// ***************************************************************************
-
 const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors')
-const crypto = require('crypto');
-const pkg = require('./package.json');
+const { OAuth2Client } = require('google-auth-library');
 const path = require('path');
+const session = require('express-session');
+const sqlite3 = require('sqlite3').verbose();
+const cors = require('cors');
 
-
-// App constants
-const port = process.env.PORT || 3000;
-const apiPrefix = '/api';
-
-// Store data in-memory, not suited for production use!
-const db = {
-    test: {
-      user: 'test',
-      currency: '$',
-      description: `Test account`,
-      balance: 75,
-      transactions: [
-        { id: '1', date: '2020-10-01', object: 'Pocket money', amount: 50 },
-        { id: '2', date: '2020-10-03', object: 'Book', amount: -10 },
-        { id: '3', date: '2020-10-04', object: 'Sandwich', amount: -5 }
-      ],
-    },
-    jondoe: {
-        user: 'jondoe',
-        currency: '$',
-        description: `Second test account`,
-        balance: 150,
-        transactions: [
-          { id: '1', date: '2022-10-01', object: 'Gum', amount: -2 },
-          { id: '2', date: '2022-10-03', object: 'Book', amount: -10 },
-          { id: '3', date: '2022-10-04', object: 'Restaurant', amount: -45 }
-        ],
-      }
-  
-  };
-  
-// Create the Express app & setup middlewares
 const app = express();
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-app.use(cors({ origin: /http:\/\/(127(\.\d){3}|localhost)/}));
-app.options('*', cors());
+const PORT = 8080;
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// ***************************************************************************
+// CORS configuration
+app.use(cors({
+  origin: ['*']
+}));
 
-// Configure routes
-const router = express.Router();
+// SQLite database setup
+const db = new sqlite3.Database('./psuLogin.db', (err) => {
+  if (err) {
+    console.error('Error opening database', err);
+  } else {
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE,
+      name TEXT,
+      loginTime TEXT,
+      logoutTime TEXT
+    )`);
+  }
+});
 
-// Hello World for index page
+app.use(express.json());
+app.use(express.static('public'));
+app.use(session({
+  secret: 'your_session_secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax'
+  }
+}));
+
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.get('/api', function (req, res) {
-    return res.send("Fabrikam Bank API");
-})
-  
-// ----------------------------------------------
-  // Create an account
-router.post('/accounts', (req, res) => {
-    // Check mandatory request parameters
-    if (!req.body.user || !req.body.currency) {
-      return res.status(400).json({ error: 'Missing parameters' });
-    }
-  
-    // Check if account already exists
-    if (db[req.body.user]) {
-      return res.status(409).json({ error: 'User already exists' });
-    }
-  
-    // Convert balance to number if needed
-    let balance = req.body.balance;
-    if (balance && typeof balance !== 'number') {
-      balance = parseFloat(balance);
-      if (isNaN(balance)) {
-        return res.status(400).json({ error: 'Balance must be a number' });  
+app.post('/auth/google', async (req, res) => {
+  const { token } = req.body;
+  if (!token || typeof token !== 'string' || token.split('.').length !== 3) {
+    return res.status(400).json({ status: 'error', message: 'Invalid token format' });
+  }
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+    const payload = ticket.getPayload();
+    const userId = payload['sub'];
+    const userEmail = payload['email'];
+    const userName = payload['name'];
+    const loginTime = new Date().toISOString();
+
+    db.run(`INSERT OR REPLACE INTO users (id, email, name, loginTime) VALUES (?, ?, ?, ?)`,
+      [userId, userEmail, userName, loginTime],
+      (err) => {
+        if (err) {
+          console.error('Error saving user:', err);
+          return res.status(500).json({ status: 'error', message: 'Failed to save user data' });
+        }
+        
+        req.session.userId = userId;
+        res.json({ status: 'success', email: userEmail, name: userName });
       }
-    }
-  
-    // Create account
-    const account = {
-      user: req.body.user,
-      currency: req.body.currency,
-      description: req.body.description || `${req.body.user}'s budget`,
-      balance: balance || 0,
-      transactions: [],
-    };
-    db[req.body.user] = account;
-  
-    return res.status(201).json(account);
-  });
-  
-// ----------------------------------------------
-
-// Get all data for the specified account
-router.get('/accounts/:user', (req, res) => {
-    const account = db[req.params.user];
-  
-    // Check if account exists
-    if (!account) {
-      return res.status(404).json({ error: 'User does not exist' });
-    }
-  
-    return res.json(account);
-  });
-  
-  // ----------------------------------------------
-  
-// Remove specified account
-router.delete('/accounts/:user', (req, res) => {
-    const account = db[req.params.user];
-  
-    // Check if account exists
-    if (!account) {
-      return res.status(404).json({ error: 'User does not exist' });
-    }
-  
-    // Removed account
-    delete db[req.params.user];
-  
-    res.sendStatus(204);
-  });
-  
-  // ----------------------------------------------
-  
-  // Add a transaction to a specific account
-  router.post('/accounts/:user/transactions', (req, res) => {
-    const account = db[req.params.user];
-  
-    // Check if account exists
-    if (!account) {
-      return res.status(404).json({ error: 'User does not exist' });
-    }
-  
-    // Check mandatory requests parameters
-    if (!req.body.date || !req.body.object || !req.body.amount) {
-      return res.status(400).json({ error: 'Missing parameters' });
-    }
-  
-    // Convert amount to number if needed
-    let amount = req.body.amount;
-    if (amount && typeof amount !== 'number') {
-      amount = parseFloat(amount);
-    }
-  
-    // Check that amount is a valid number
-    if (amount && isNaN(amount)) {
-      return res.status(400).json({ error: 'Amount must be a number' });
-    }
-  
-    // Generates an ID for the transaction
-    const id = crypto
-      .createHash('md5')
-      .update(req.body.date + req.body.object + req.body.amount)
-      .digest('hex');
-  
-    // Check that transaction does not already exist
-    if (account.transactions.some((transaction) => transaction.id === id)) {
-      return res.status(409).json({ error: 'Transaction already exists' });
-    }
-  
-    // Add transaction
-    const transaction = {
-      id,
-      date: req.body.date,
-      object: req.body.object,
-      amount,
-    };
-    account.transactions.push(transaction);
-  
-    // Update balance
-    account.balance += transaction.amount;
-  
-    return res.status(201).json(transaction);
-  });
-  
-  // ----------------------------------------------
-  
-  // Remove specified transaction from account
-  router.delete('/accounts/:user/transactions/:id', (req, res) => {
-    const account = db[req.params.user];
-  
-    // Check if account exists
-    if (!account) {
-      return res.status(404).json({ error: 'User does not exist' });
-    }
-  
-    const transactionIndex = account.transactions.findIndex(
-      (transaction) => transaction.id === req.params.id
     );
-  
-    // Check if transaction exists
-    if (transactionIndex === -1) {
-      return res.status(404).json({ error: 'Transaction does not exist' });
-    }
-  
-    // Remove transaction
-    account.transactions.splice(transactionIndex, 1);
-  
-    res.sendStatus(204);
-  });
-  
-// ***************************************************************************
-
-// Add 'api` prefix to all routes
-app.use(apiPrefix, router);
-
-// Start the server
-app.listen(port, () => {
-    console.log(`Server listening on port ${port}`);
+  } catch (error) {
+    console.error('Error verifying token:', error);
+    return res.status(400).json({ status: 'error', message: 'Invalid token' });
+  }
 });
+
+app.get('/user', (req, res) => {
+  const userId = req.session.userId;
+  if (userId) {
+    db.get(`SELECT * FROM users WHERE id = ?`, [userId], (err, row) => {
+      if (err) {
+        console.error('Error fetching user:', err);
+        return res.status(500).json({ status: 'error', message: 'Failed to fetch user data' });
+      }
+      if (row) {
+        res.json({ status: 'success', user: { email: row.email, name: row.name } });
+      } else {
+        res.status(401).json({ status: 'error', message: 'Not authenticated' });
+      }
+    });
+  } else {
+    res.status(401).json({ status: 'error', message: 'Not authenticated' });
+  }
+});
+
+app.post('/logout', (req, res) => {
+  const userId = req.session.userId;
+  const logoutTime = new Date().toISOString();
+
+  if (userId) {
+    db.run(`UPDATE users SET logoutTime = ? WHERE id = ?`, [logoutTime, userId], (err) => {
+      if (err) {
+        console.error('Error updating logout time:', err);
+      }
+      req.session.destroy((err) => {
+        if (err) {
+          console.error('Error destroying session:', err);
+          return res.status(500).json({ status: 'error', message: 'Failed to logout' });
+        }
+        res.clearCookie('connect.sid');
+        res.json({ status: 'success', message: 'Logged out successfully' });
+      });
+    });
+  } else {
+    res.status(401).json({ status: 'error', message: 'Not authenticated' });
+  }
+});
+
+app.get('/admin/users', (req, res) => {
+  db.all(`SELECT * FROM users`, [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ users: rows });
+  });
+});
+
+app.get('/check-email', (req, res) => {
+  const { email } = req.query;
+  if (!email) {
+    return res.status(400).json({ status: 'error', message: 'Email parameter is required' });
+  }
+  db.get('SELECT * FROM users WHERE email = ?', [email], (err, row) => {
+    if (err) {
+      console.error('Database error:', err);
+      return res.status(500).json({ status: 'error', message: 'Database error' });
+    }
+    res.json({ exists: !!row });
+  });
+});
+
+app.post('/register', (req, res) => {
+  const { email, name } = req.body;
+
+  // Check if email is provided
+  if (!email) {
+    return res.status(400).json({ status: 'error', message: 'Email is required' });
+  }
+  // Check if name is provided
+  if (!name) {
+    return res.status(400).json({ status: 'error', message: 'Name is required' });
+  }
   
+  const id = Date.now().toString();
+  const loginTime = new Date().toISOString();
+
+  db.run('INSERT INTO users (id, email, name, loginTime) VALUES (?, ?, ?, ?)',
+    [id, email, name, loginTime],
+    function(err) {
+      if (err) {
+        console.error('Error saving user:', err);
+        return res.status(500).json({ status: 'error', message: 'Failed to save user data' });
+      }
+      
+      req.session.userId = id;
+      res.json({ status: 'success', user: { id, email, name, loginTime } });
+    }
+  );
+});
+
+const startServer = () => {
+  const port = process.env.PORT || 8000;
+  return app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+  });
+};
+
+if (require.main === module) {
+  startServer();
+}
+
+// Export the app
+module.exports = { app, startServer };
