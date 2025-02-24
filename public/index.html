@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Sign In For PSU</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Google Sign In For PSU</h1>
+        <div id="login-container">
+            <div id="g_id_onload"
+                 data-client_id="564507615020-5a6gc9r1qn4sp1qjontrjh214list2bn.apps.googleusercontent.com"
+                 data-callback="handleCredentialResponse">
+            </div>
+            <div style="width: 200px; border: 1px solid black;" class="g_id_signin" data-type="standard"></div>
+        </div>
+        <div id="welcome-container" style="display: none;">
+            <p id="welcome-message"></p>
+            <button id="logout-button" style="width: 200px; height: 40px; background-color: white; border: 1px solid black;">Logout</button>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

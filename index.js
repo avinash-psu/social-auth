@@ -54,9 +54,9 @@ app.options('*', cors());
 const router = express.Router();
 
 // Hello World for index page
-app.get('/', function (req, res) {
-    return res.send("Hello World!");
-})
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 app.get('/api', function (req, res) {
     return res.send("Fabrikam Bank API");
