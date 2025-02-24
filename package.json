@@ -7,7 +7,7 @@
   "keywords": [],
   "author": "Microsoft",
   "scripts": {
-      "start": "node index.js",
+      "start": "node server.js",
       "lint": "eslint",
       "format": "prettier --single-quote --write *.js"    
   },
