@@ -8,6 +8,7 @@ const bodyParser = require('body-parser');
 const cors = require('cors')
 const crypto = require('crypto');
 const pkg = require('./package.json');
+const path = require('path');
 
 
 // App constants
